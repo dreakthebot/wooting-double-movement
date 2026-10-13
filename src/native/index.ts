@@ -1,5 +1,21 @@
-import { get_sdk_state, set_config, start_service, stop_service } from "./native";
-import { ServiceConfiguration, SDKState } from "./types";
+import {
+  get_latency_stats,
+  get_sdk_state,
+  set_config,
+  start_service,
+  stop_service,
+} from "./native";
+import { LatencyStats, ServiceConfiguration, SDKState } from "./types";
+
+export function getLatencyStats(): LatencyStats | null {
+  const raw = get_latency_stats();
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
 
 export function startService(
   config: ServiceConfiguration,

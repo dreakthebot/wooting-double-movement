@@ -63,6 +63,8 @@ pub struct Service {
     controller_state: ControllerState,
     smoother: TurnSmoother,
     last_sent: Option<(f32, f32)>,
+    /// Set when a stick update is sent; read and cleared by the loop for latency stats.
+    sent_flag: bool,
     /// Result of the last focus check, and when it ran.
     game_focused: bool,
     last_focus_check: Option<Instant>,
@@ -88,6 +90,7 @@ impl Service {
             controller_state: ControllerState::new(),
             smoother: TurnSmoother::new(),
             last_sent: None,
+            sent_flag: false,
             game_focused: true,
             last_focus_check: None,
             #[cfg(feature = "rawinput")]
@@ -281,8 +284,14 @@ impl Service {
                 }
             }
             self.last_sent = Some((x, y));
+            self.sent_flag = true;
         }
         Ok(())
+    }
+
+    /// Returns whether a stick update was sent since the last call, and clears the flag.
+    pub fn take_sent(&mut self) -> bool {
+        std::mem::replace(&mut self.sent_flag, false)
     }
 
     /// Re-checks (at most every 200ms) whether the game window is focused.

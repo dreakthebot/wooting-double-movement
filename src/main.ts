@@ -21,6 +21,7 @@ import fs from "fs";
 import path from "path";
 import install, { REACT_DEVELOPER_TOOLS } from "electron-devtools-installer";
 import {
+  getLatencyStats,
   getSDKState,
   setServiceConfig,
   startService,
@@ -515,6 +516,10 @@ class ServiceManager {
     ipcMain.on("hotkey-edit-cancel", (_) => {
       console.debug("Hotkey edit cancelled");
       registerShortcuts();
+    });
+
+    ipcMain.handle("get_latency_stats", (_) => {
+      return this.running ? getLatencyStats() : null;
     });
 
     ipcMain.handle("get_sdk_state", (_) => {

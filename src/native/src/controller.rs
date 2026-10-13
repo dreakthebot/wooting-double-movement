@@ -678,6 +678,31 @@ mod tests {
         assert_eq!(out, (1.0, 0.0), "arrives at target");
     }
 
+    /// Times the stick math. Run with: cargo test --release --lib -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn bench_stick_math() {
+        let mut c = cfg();
+        c.socd_mode = SocdMode::LastInputWins;
+        c.split_sides = true;
+        let mut js = JoystickState::new();
+        let mut smoother = TurnSmoother::new();
+        let n = 1_000_000u32;
+        let start = Instant::now();
+        let mut acc = 0.0f32;
+        for i in 0..n {
+            // Alternate W+D and W+A every iteration so every call does real work
+            js.set_direction_state_digital(JoystickDirection::Up, true);
+            js.set_direction_state_digital(JoystickDirection::Right, i % 2 == 0);
+            js.set_direction_state_digital(JoystickDirection::Left, i % 2 == 1);
+            let target = js.get_basic_direction(Some(&c));
+            let (x, y) = smoother.step(target, 20.0, start + Duration::from_micros(i as u64 * 250));
+            acc += x + y;
+        }
+        let per = start.elapsed().as_nanos() as f64 / n as f64;
+        println!("stick math: {:.0} ns per update (checksum {})", per, acc);
+    }
+
     #[test]
     fn turn_smoother_off_is_instant() {
         let mut s = TurnSmoother::new();

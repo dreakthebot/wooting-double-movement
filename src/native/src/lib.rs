@@ -13,11 +13,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
-use std::time::Duration;
+#[allow(unused_imports)]
+use std::time::{Duration, Instant};
 
 mod config;
 mod controller;
 mod focus;
+mod latency;
+mod timing;
 #[cfg(windows)]
 mod service;
 
@@ -25,32 +28,11 @@ use config::ServiceConfiguration;
 #[cfg(windows)]
 use service::Service;
 
-/// Raises the Windows timer resolution to 1ms for as long as it's alive.
-struct HighResTimer;
-
-impl HighResTimer {
-    #[allow(dead_code)]
-    fn new() -> Self {
-        #[cfg(windows)]
-        unsafe {
-            winapi::um::timeapi::timeBeginPeriod(1);
-        }
-        HighResTimer
-    }
-}
-
-impl Drop for HighResTimer {
-    fn drop(&mut self) {
-        #[cfg(windows)]
-        unsafe {
-            winapi::um::timeapi::timeEndPeriod(1);
-        }
-    }
-}
-
 lazy_static! {
     static ref MSG_THREAD_RUNNING: AtomicBool = AtomicBool::new(false);
     static ref MESSAGE_LOOP: Mutex<Option<thread::JoinHandle<()>>> = Mutex::new(None);
+    /// Latest responsiveness measurements, published by the loop for the UI.
+    static ref LATENCY: Mutex<Option<latency::LatencySnapshot>> = Mutex::new(None);
 }
 
 #[cfg(windows)]
@@ -161,6 +143,7 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("set_config", set_config)?;
     cx.export_function("start_gamepad_detection", start_gamepad_detection)?;
     cx.export_function("end_gamepad_detection", end_gamepad_detection)?;
+    cx.export_function("get_latency_stats", get_latency_stats)?;
 
     Ok(())
 }
@@ -226,14 +209,33 @@ fn start_service(mut cx: FunctionContext) -> JsResult<JsBoolean> {
     info!("Starting service");
     #[cfg(windows)]
     lock(&MESSAGE_LOOP).replace(thread::spawn(move || {
-        // Windows' default timer resolution is ~15.6ms, which would turn the 1ms sleep
-        // below into ~64 updates/sec. Request 1ms resolution while the loop runs.
-        let _timer = HighResTimer::new();
+        // High-priority scheduling and a high-resolution timer keep key checks frequent
+        // and on time even while a game is loading the CPU (see timing.rs).
+        let priority = timing::PriorityGuard::new();
+        let timer = timing::LoopTimer::new(timing::LOOP_INTERVAL);
+        info!(
+            "Input loop: interval {:?}, high-res timer {}, high priority {}",
+            timing::LOOP_INTERVAL,
+            timer.is_high_res(),
+            priority.is_elevated()
+        );
+        let mut stats = latency::LatencyWindow::new(timing::LOOP_INTERVAL);
+        let mut tick_start = Instant::now();
         let mut callback = callback;
         let mut consecutive_errors: u32 = 0;
 
         while MSG_THREAD_RUNNING.load(Ordering::SeqCst) {
-            let result = catch_unwind(AssertUnwindSafe(|| service().poll()));
+            let work_start = Instant::now();
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                let mut svc = service();
+                let r = svc.poll();
+                (r, svc.take_sent())
+            }));
+            let work = work_start.elapsed();
+            let (result, sent) = match result {
+                Ok((r, sent)) => (Ok(r), sent),
+                Err(p) => (Err(p), false),
+            };
             let fatal = match result {
                 Ok(Ok(())) => {
                     consecutive_errors = 0;
@@ -263,8 +265,17 @@ fn start_service(mut cx: FunctionContext) -> JsResult<JsBoolean> {
                 }
                 break;
             }
-            thread::sleep(Duration::from_millis(1));
+
+            timer.wait();
+            let now = Instant::now();
+            stats.record(now - tick_start, if sent { Some(work) } else { None });
+            tick_start = now;
+            if stats.is_full() {
+                let snap = stats.take_snapshot(priority.is_elevated(), timer.is_high_res());
+                *lock(&LATENCY) = Some(snap);
+            }
         }
+        *lock(&LATENCY) = None;
 
         if let Some(callback) = callback.take() {
             release_callback(&queue, callback);
@@ -335,6 +346,17 @@ fn set_config(mut cx: FunctionContext) -> JsResult<JsNull> {
         error!("Failed to apply config: {:#}", e);
     }
     return Ok(cx.null());
+}
+
+/// Latest responsiveness measurements as JSON, or null when the service isn't running.
+fn get_latency_stats(mut cx: FunctionContext) -> JsResult<JsValue> {
+    match lock(&LATENCY).as_ref() {
+        Some(snap) => match serde_json::to_string(snap) {
+            Ok(json) => Ok(cx.string(json).upcast()),
+            Err(_) => Ok(cx.null().upcast()),
+        },
+        None => Ok(cx.null().upcast()),
+    }
 }
 
 fn start_gamepad_detection(mut cx: FunctionContext) -> JsResult<JsNull> {

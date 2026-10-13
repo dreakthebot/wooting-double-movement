@@ -28,8 +28,13 @@ Fork of Wooting Double Movement 1.5.0.
 - Optional "only while game is focused" mode.
 - Riskier options (snap-tap modes, turn smoothing) are off by default and show a warning.
 
+**Responsiveness**
+- Keys are checked about 4,000 times a second (every 0.25 ms) using a high-resolution Windows timer, up from roughly every 1–2 ms.
+- The input loop gets game-priority scheduling, so it stays on time while a game is using your CPU.
+- New **Responsiveness** panel in the Movement tab shows live delay measurements.
+
 **Fixes**
-- Input loop now runs at ~1000 Hz instead of being limited by the Windows timer (~64 Hz), so quick taps are no longer missed.
+- The input loop is no longer limited by the default Windows timer (~64 Hz), so quick taps are no longer missed.
 - Errors no longer leave the app stuck: the service reports failures, centres the stick and can be turned back on.
 - Fixed crashes when keyboards are plugged in or removed.
 

@@ -8,3 +8,4 @@ export function get_sdk_state(): string | null;
 export function set_config(config: string);
 export function start_gamepad_detection();
 export function end_gamepad_detection();
+export function get_latency_stats(): string | null;

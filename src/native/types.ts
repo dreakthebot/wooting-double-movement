@@ -96,6 +96,22 @@ export const defaultSettings: AppSettings = {
   focusWindowTitle: "Fortnite",
 };
 
+/** Responsiveness measurements from the input loop (all times in microseconds) */
+export interface LatencyStats {
+  targetIntervalUs: number;
+  avgIntervalUs: number;
+  p99IntervalUs: number;
+  maxIntervalUs: number;
+  checksPerSecond: number;
+  avgSendUs: number;
+  maxSendUs: number;
+  updatesSent: number;
+  typicalDelayUs: number;
+  worstDelayUs: number;
+  highPriority: boolean;
+  highResTimer: boolean;
+}
+
 export type SDKState =
   | { type: "Uninitialized" }
   | { type: "Error"; value: string }

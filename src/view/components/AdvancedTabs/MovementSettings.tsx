@@ -25,6 +25,7 @@ import { InfoTooltip } from "../general/InfoTooltip";
 import { AngleControl } from "../settings/angle/AngleControl";
 import { strafeAngleRange } from "./StrafeSettings";
 import { keybindDisplay } from "./Utils";
+import { ResponsivenessPanel } from "./Responsiveness";
 
 const backDiagonalRange: [number, number] = [30, 70];
 
@@ -318,6 +319,8 @@ export function MovementSettingsTab() {
           onChange={(v) => update({ analogCurve: v })}
         />
       </VStack>
+
+      <ResponsivenessPanel />
 
       <Text fontSize="xs" color="gray.500">
         <Kbd>Tip</Kbd> These settings apply instantly while double movement is
