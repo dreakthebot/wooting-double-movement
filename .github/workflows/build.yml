@@ -1,0 +1,40 @@
+name: Build Windows installer
+
+on:
+  push:
+    branches: [main, movement-upgrades]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 16
+          cache: yarn
+
+      - name: Install Rust (MSVC)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Movement unit tests
+        run: cargo test --manifest-path src/native/Cargo.toml --lib
+
+      # Installs dependencies and builds the Rust native module (postinstall)
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Bundle app
+        run: yarn build
+
+      # Downloads the pinned, checksum-verified driver installers and builds the setup .exe
+      - name: Build installer
+        run: yarn dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: double-movement-plus-installer
+          path: dist/*.exe
+          if-no-files-found: error
