@@ -14,6 +14,7 @@ use std::time::Duration;
 
 mod config;
 mod controller;
+mod focus;
 #[cfg(windows)]
 mod service;
 

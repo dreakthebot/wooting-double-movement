@@ -12,9 +12,14 @@ import {
   SliderFilledTrack,
   SliderThumb,
   HStack,
+  Input,
 } from "@chakra-ui/react";
 import { useRemoteValue } from "ipc";
-import { JoystickAngleConfiguration, SocdMode } from "native/types";
+import {
+  ControllerType,
+  JoystickAngleConfiguration,
+  SocdMode,
+} from "native/types";
 import React, { useCallback, useState } from "react";
 import { InfoTooltip } from "../general/InfoTooltip";
 import { AngleControl } from "../settings/angle/AngleControl";
@@ -92,6 +97,11 @@ function ValueSlider(props: {
 export function MovementSettingsTab() {
   const [keyMapping] = useRemoteValue("keyMapping");
   const [config, setConfig] = useRemoteValue("leftJoystickStrafingAngles");
+  const [controllerType, setControllerType] = useRemoteValue("controllerType");
+  const [onlyWhenFocused, setOnlyWhenFocused] =
+    useRemoteValue("onlyWhenFocused");
+  const [focusTitle, setFocusTitle] = useRemoteValue("focusWindowTitle");
+  const [titleDraft, setTitleDraft] = useState<string | null>(null);
 
   const update = useCallback(
     (patch: Partial<JoystickAngleConfiguration>) =>
@@ -120,6 +130,56 @@ export function MovementSettingsTab() {
 
   return (
     <VStack align="stretch" spacing="5" pb="4">
+      <VStack align="stretch" spacing="2">
+        <SectionTitle title="Controller type">
+          Which controller the app pretends to be. If the game ignores the
+          stick, try the other one. Changing this briefly restarts the virtual
+          controller.
+        </SectionTitle>
+        <Select
+          size="sm"
+          value={controllerType ?? "DualShock4"}
+          onChange={(e) =>
+            setControllerType(e.target.value as ControllerType)
+          }
+        >
+          <option value="DualShock4">PlayStation (DualShock 4)</option>
+          <option value="Xbox360">Xbox 360</option>
+        </Select>
+      </VStack>
+
+      <VStack align="stretch" spacing="2">
+        <ToggleRow
+          title="Only while game is focused"
+          checked={!!onlyWhenFocused}
+          onToggle={() => setOnlyWhenFocused(!onlyWhenFocused)}
+          tooltip={
+            <>
+              The stick only moves while a window whose title contains the text
+              below is in front. Alt-tabbing centres the stick, so typing{" "}
+              {W}
+              {A}
+              {S}
+              {D} elsewhere won't move you in game.
+            </>
+          }
+        />
+        {onlyWhenFocused && (
+          <Input
+            size="sm"
+            value={titleDraft ?? focusTitle ?? "Fortnite"}
+            onChange={(e) => setTitleDraft(e.target.value)}
+            onBlur={() => {
+              if (titleDraft !== null && titleDraft !== focusTitle) {
+                setFocusTitle(titleDraft);
+              }
+              setTitleDraft(null);
+            }}
+            placeholder="Window title contains…"
+          />
+        )}
+      </VStack>
+
       <VStack align="stretch" spacing="2">
         <SectionTitle title="Opposite keys">
           What happens when opposite keys are held together, e.g. holding {W}{" "}

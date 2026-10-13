@@ -403,13 +403,22 @@ class ServiceManager {
     });
 
     ipcMain.on("store_set", (_, name: keyof AppSettings, value) => {
+      const previous = this.store.get(name);
       this.store_set(name, value);
       this.update_state();
 
-      if (
+      if (name === "controllerType") {
+        // The virtual controller's type is fixed once created, so recreate it.
+        if (this.running && previous !== value) {
+          this.stop();
+          this.start();
+        }
+      } else if (
         name == "leftJoystickStrafingAngles" ||
         name === "keyMapping" ||
-        name === "useAnalogInput"
+        name === "useAnalogInput" ||
+        name === "onlyWhenFocused" ||
+        name === "focusWindowTitle"
       ) {
         this.update_config();
       }
@@ -537,6 +546,12 @@ class ServiceManager {
         ...this.store.get("keyMapping"),
       },
       useAnalogInput: this.store.get("useAnalogInput") ?? false,
+      controllerType:
+        this.store.get("controllerType") ?? defaultSettings.controllerType,
+      onlyWhenFocused:
+        this.store.get("onlyWhenFocused") ?? defaultSettings.onlyWhenFocused,
+      focusWindowTitle:
+        this.store.get("focusWindowTitle") ?? defaultSettings.focusWindowTitle,
     };
   }
 

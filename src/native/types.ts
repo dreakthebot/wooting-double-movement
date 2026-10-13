@@ -71,10 +71,17 @@ export const defaultKeyMapping: KeyMapping = {
 
 export const defaultToggleAccelerator = [Key.Ctrl, Key.P];
 
+export type ControllerType = "DualShock4" | "Xbox360";
+
 export interface ServiceConfiguration {
   leftJoystickStrafingAngles: JoystickAngleConfiguration;
   keyMapping: KeyMapping;
   useAnalogInput: boolean;
+  /** Virtual controller to emulate; changing it restarts the service */
+  controllerType: ControllerType;
+  /** Only move the stick while a window with this title is focused */
+  onlyWhenFocused: boolean;
+  focusWindowTitle: string;
 }
 
 export const defaultSettings: AppSettings = {
@@ -83,6 +90,9 @@ export const defaultSettings: AppSettings = {
   keyMapping: defaultKeyMapping,
   enabledToggleAccelerator: defaultToggleAccelerator,
   useAnalogInput: false,
+  controllerType: "DualShock4",
+  onlyWhenFocused: false,
+  focusWindowTitle: "Fortnite",
 };
 
 export type SDKState =

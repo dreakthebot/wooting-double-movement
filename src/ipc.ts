@@ -22,7 +22,7 @@ export class RemoteStore {
     const listener = (__: IpcRendererEvent, cb_name: string, value: any) => {
       const name = cb_name as keyof AppSettings;
       if (!_.isEqual(this.settingCache[name], value))
-        this.settingCache[name] = value;
+        (this.settingCache as any)[name] = value;
     };
 
     ipcRenderer.on(storeChangedChannel, listener);

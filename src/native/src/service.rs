@@ -11,7 +11,9 @@ use serde::{Deserialize, Serialize};
 use vigem::*;
 use wooting_analog_wrapper as sdk;
 
-use crate::config::ServiceConfiguration;
+use crate::config::{ControllerType, ServiceConfiguration};
+use crate::focus;
+use std::time::{Duration, Instant};
 use crate::controller::*;
 
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
@@ -61,6 +63,9 @@ pub struct Service {
     controller_state: ControllerState,
     smoother: TurnSmoother,
     last_sent: Option<(f32, f32)>,
+    /// Result of the last focus check, and when it ran.
+    game_focused: bool,
+    last_focus_check: Option<Instant>,
     initd: bool,
     config: ServiceConfiguration,
     analog_initialised: bool,
@@ -83,6 +88,8 @@ impl Service {
             controller_state: ControllerState::new(),
             smoother: TurnSmoother::new(),
             last_sent: None,
+            game_focused: true,
+            last_focus_check: None,
             #[cfg(feature = "rawinput")]
             input_manager: RawInputManager::new().unwrap(),
             initd: false,
@@ -114,24 +121,24 @@ impl Service {
             "Failed to connect to VigemBus. Please ensure you have ViGEmBus properly installed",
         )?;
 
-        #[cfg(feature = "ds4")]
-        let mut target = {
-            // Make a new target which represent DualShock4 controller
-            let t = Target::new(TargetType::DualShock4);
-            // DS4 vid/pid
-            t.set_vid(0x054C);
-            t.set_pid(0x05C4);
-            t
+        let mut target = match self.config.controller_type {
+            ControllerType::DualShock4 => {
+                // Make a new target which represent DualShock4 controller
+                let t = Target::new(TargetType::DualShock4);
+                // DS4 vid/pid
+                t.set_vid(0x054C);
+                t.set_pid(0x05C4);
+                t
+            }
+            ControllerType::Xbox360 => {
+                // Make a new target which represent XBOX360 controller
+                let t = Target::new(TargetType::Xbox360);
+                t.set_vid(0x31e3);
+                t.set_pid(0xFFFF);
+                t
+            }
         };
-
-        #[cfg(not(feature = "ds4"))]
-        let mut target = {
-            // Make a new target which represent XBOX360 controller
-            let t = Target::new(TargetType::Xbox360);
-            t.set_vid(0x31e3);
-            t.set_pid(0xFFFF);
-            t
-        };
+        info!("Creating {:?} virtual controller", self.config.controller_type);
 
         // Get controller state - as target isnt connected state is "Initialized"
         debug!("Controller state {:?}", target.state());
@@ -245,20 +252,57 @@ impl Service {
                     .left_joystick
                     .set_direction_state_analog(JoystickDirection::Down, 0.0);
 
-            #[cfg(feature = "ds4")]
-            let report = self
-                .controller_state
-                .get_ds4_report_from_axis(0.0, tiny_axis_y);
-
-            #[cfg(not(feature = "ds4"))]
-            let report = self
-                .controller_state
-                .get_xusb_report_from_axis(0.0, tiny_axis_y);
-
-            controller.update(&report)?;
+            match controller.get_type() {
+                TargetType::DualShock4 => controller.update(
+                    &self
+                        .controller_state
+                        .get_ds4_report_from_axis(0.0, tiny_axis_y),
+                )?,
+                TargetType::Xbox360 => controller.update(
+                    &self
+                        .controller_state
+                        .get_xusb_report_from_axis(0.0, tiny_axis_y),
+                )?,
+            }
             self.last_sent = None;
         }
         Ok(())
+    }
+
+    /// Sends a stick position using the report type that matches the virtual controller.
+    fn send_axis(&mut self, x: f32, y: f32) -> Result<()> {
+        if let Some(controller) = self.controller.as_mut() {
+            match controller.get_type() {
+                TargetType::DualShock4 => {
+                    controller.update(&self.controller_state.get_ds4_report_from_axis(x, y))?
+                }
+                TargetType::Xbox360 => {
+                    controller.update(&self.controller_state.get_xusb_report_from_axis(x, y))?
+                }
+            }
+            self.last_sent = Some((x, y));
+        }
+        Ok(())
+    }
+
+    /// Re-checks (at most every 200ms) whether the game window is focused.
+    fn check_focus(&mut self) -> bool {
+        if !self.config.only_when_focused {
+            self.game_focused = true;
+            return true;
+        }
+        let now = Instant::now();
+        let due = self
+            .last_focus_check
+            .map(|t| now.saturating_duration_since(t) >= Duration::from_millis(200))
+            .unwrap_or(true);
+        if due {
+            self.last_focus_check = Some(now);
+            self.game_focused = focus::foreground_window_title()
+                .map(|title| focus::title_matches(&title, &self.config.focus_window_title))
+                .unwrap_or(false);
+        }
+        self.game_focused
     }
 
     fn update_controller(&mut self) -> Result<()> {
@@ -275,17 +319,7 @@ impl Service {
             return Ok(());
         }
 
-        if let Some(controller) = self.controller.as_mut() {
-            #[cfg(feature = "ds4")]
-            let report = self.controller_state.get_ds4_report_from_axis(x, y);
-
-            #[cfg(not(feature = "ds4"))]
-            let report = self.controller_state.get_xusb_report_from_axis(x, y);
-
-            controller.update(&report)?;
-            self.last_sent = Some((x, y));
-        }
-        Ok(())
+        self.send_axis(x, y)
     }
 
     #[cfg(feature = "rawinput")]
@@ -484,9 +518,17 @@ impl Service {
 
     pub fn poll(&mut self) -> Result<()> {
         if self.initd {
+            let was_focused = self.game_focused;
             if self.is_detecting {
                 self.output_controller_detection()?;
+            } else if !self.check_focus() {
+                // Game isn't focused: centre the stick once and ignore movement keys.
+                if self.last_sent != Some((0.0, 0.0)) {
+                    self.smoother = TurnSmoother::new();
+                    self.send_axis(0.0, 0.0)?;
+                }
             } else {
+                let regained_focus = !was_focused;
                 let should_update = {
                     // Analog being initialised implies that the setting for using analog is on
                     if self.analog_initialised {
@@ -510,7 +552,7 @@ impl Service {
                 // so it has to be advanced every tick.
                 let smoothing =
                     self.config.left_joystick_strafing_angles.turn_smoothing_ms > 0.0;
-                if should_update || smoothing {
+                if should_update || smoothing || regained_focus {
                     self.update_controller()?;
                 }
             }
@@ -520,11 +562,12 @@ impl Service {
     }
 
     pub fn get_xinput_slot(&mut self) -> Option<u32> {
-        #[cfg(not(feature = "ds4"))]
         if let Some(controller) = self.controller.as_ref() {
-            let slot = self.vigem.xbox_get_user_index(&controller);
-            info!("We got slot {}", slot);
-            return Some(slot);
+            if let TargetType::Xbox360 = controller.get_type() {
+                let slot = self.vigem.xbox_get_user_index(&controller);
+                info!("We got slot {}", slot);
+                return Some(slot);
+            }
         }
         None
     }
@@ -555,7 +598,12 @@ impl Service {
     }
 
     pub fn set_config(&mut self, config: ServiceConfiguration) -> Result<()> {
+        if self.initd && config.controller_type != self.config.controller_type {
+            // The app restarts the service for this; the running target keeps its type.
+            warn!("Controller type changed; takes effect after the service restarts");
+        }
         self.config = config;
+        self.last_focus_check = None;
         self.sync_activation();
         if self.config.use_analog_input {
             self.init_analog()?;

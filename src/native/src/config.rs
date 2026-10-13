@@ -129,6 +129,22 @@ impl Default for KeyMapping {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+pub enum ControllerType {
+    DualShock4,
+    Xbox360,
+}
+
+impl Default for ControllerType {
+    fn default() -> Self {
+        ControllerType::DualShock4
+    }
+}
+
+fn default_focus_title() -> String {
+    "Fortnite".to_string()
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ServiceConfiguration {
     #[serde(rename = "leftJoystickStrafingAngles")]
@@ -137,6 +153,14 @@ pub struct ServiceConfiguration {
     pub key_mapping: KeyMapping,
     #[serde(rename = "useAnalogInput")]
     pub use_analog_input: bool,
+    /// Which virtual controller to emulate. Changing it requires a service restart.
+    #[serde(rename = "controllerType", default)]
+    pub controller_type: ControllerType,
+    /// Only drive the stick while a window whose title contains `focus_window_title` is focused.
+    #[serde(rename = "onlyWhenFocused", default)]
+    pub only_when_focused: bool,
+    #[serde(rename = "focusWindowTitle", default = "default_focus_title")]
+    pub focus_window_title: String,
 }
 
 impl Default for ServiceConfiguration {
@@ -158,6 +182,9 @@ impl Default for ServiceConfiguration {
             },
             key_mapping: KeyMapping::default(),
             use_analog_input: false,
+            controller_type: ControllerType::default(),
+            only_when_focused: false,
+            focus_window_title: default_focus_title(),
         }
     }
 }
