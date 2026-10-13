@@ -18,6 +18,7 @@ import { AppSettingsTab } from "./AdvancedTabs/AppSettings";
 import { StrafeAngleControl } from "./AdvancedTabs/StrafeSettings";
 import { KeyMappingTab } from "./AdvancedTabs/KeyMapping";
 import { AnalogSettingsTab } from "./AdvancedTabs/Analog";
+import { MovementSettingsTab } from "./AdvancedTabs/MovementSettings";
 
 const minTabHeight = "240px";
 
@@ -45,6 +46,7 @@ export function AdvancedSettingsCard(props: {
               <TabList>
                 <Tab mr={3}>Keybinds</Tab>
                 <Tab>Strafing</Tab>
+                <Tab>Movement</Tab>
                 <Tab>App</Tab>
                 <Tab>360 Movement</Tab>
               </TabList>
@@ -58,6 +60,9 @@ export function AdvancedSettingsCard(props: {
                   <StrafeAngleControl />
                 </TabPanel>
 
+                <TabPanel height="100%" px="4" pt="4" pb="0" overflowY="auto">
+                  <MovementSettingsTab />
+                </TabPanel>
                 <TabPanel height="100%" px="4" pt="4" pb="0">
                   <AppSettingsTab />
                 </TabPanel>

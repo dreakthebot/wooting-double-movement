@@ -5,7 +5,7 @@ use vigem::{DS4Button, DSReport, XUSBReport};
 #[cfg(windows)]
 use winapi::um::winuser::GetAsyncKeyState;
 
-use crate::config::{JoystickAngleConfiguration, JoystickKeyMapping};
+use crate::config::{JoystickAngleConfiguration, JoystickKeyMapping, SocdMode};
 
 pub enum JoystickDirection {
     Up,
@@ -15,34 +15,51 @@ pub enum JoystickDirection {
 }
 
 #[derive(Debug)]
-struct JoystickDirectionState(f32);
+struct JoystickDirectionState {
+    value: f32,
+    /// Order in which this key became active (higher = more recent). 0 = not active.
+    pressed_seq: u64,
+}
 
 impl JoystickDirectionState {
     pub fn new() -> Self {
-        JoystickDirectionState(0.0)
-    }
-
-    pub fn update_analog(&mut self, value: f32) -> bool {
-        if value != self.0 {
-            self.0 = value;
-            true
-        } else {
-            false
+        JoystickDirectionState {
+            value: 0.0,
+            pressed_seq: 0,
         }
     }
 
-    pub fn update_digital(&mut self, value: bool) -> bool {
-        self.update_analog(if value { 1.0 } else { 0.0 })
+    /// Updates the raw value and press order. Returns true if the output may have changed.
+    pub fn update_analog(&mut self, value: f32, activation: f32, seq_counter: &mut u64) -> bool {
+        let was_active = self.pressed_seq != 0;
+        let is_active = value > activation;
+        let mut changed = false;
+
+        if is_active && !was_active {
+            *seq_counter += 1;
+            self.pressed_seq = *seq_counter;
+            changed = true;
+        } else if !is_active && was_active {
+            self.pressed_seq = 0;
+            changed = true;
+        }
+
+        if value != self.value {
+            self.value = value;
+            changed = true;
+        }
+        changed
     }
 
+    #[allow(dead_code)]
     pub fn get(&self) -> f32 {
-        self.0
+        self.value
     }
 
     pub fn get_with_range(&self, analog_range: &(f32, f32)) -> f32 {
         let range_start = analog_range.0;
         let range_end = analog_range.1;
-        let value = self.0;
+        let value = self.value;
         if value <= range_start {
             0.0
         } else if value > range_end {
@@ -59,6 +76,46 @@ pub struct JoystickState {
     down: JoystickDirectionState,
     left: JoystickDirectionState,
     right: JoystickDirectionState,
+    /// Monotonic counter used to order key presses for the opposite-key (SOCD) modes.
+    seq_counter: u64,
+    /// Raw value above which a key counts as pressed. Kept in sync with the analog range start.
+    activation: f32,
+}
+
+/// Resolves one axis from its positive and negative inputs (already range/curve adjusted).
+/// Returns a value in -1..=1.
+fn resolve_axis(pos: f32, neg: f32, pos_seq: u64, neg_seq: u64, mode: SocdMode) -> f32 {
+    if pos > 0.0 && neg > 0.0 {
+        match mode {
+            SocdMode::Legacy => {
+                if neg > pos {
+                    -neg
+                } else {
+                    pos
+                }
+            }
+            SocdMode::LastInputWins => {
+                if neg_seq > pos_seq {
+                    -neg
+                } else {
+                    pos
+                }
+            }
+            SocdMode::FirstInputWins => {
+                // A seq of 0 shouldn't happen while a key is active, but treat it as oldest.
+                if neg_seq != 0 && (pos_seq == 0 || neg_seq < pos_seq) {
+                    -neg
+                } else {
+                    pos
+                }
+            }
+            SocdMode::Neutral => 0.0,
+        }
+    } else if neg > 0.0 {
+        -neg
+    } else {
+        pos
+    }
 }
 
 trait UpdateValue {
@@ -78,10 +135,13 @@ impl UpdateValue for bool {
 
 mod utils {
     /// Accepts x,y as values between -1 -> 1
+    /// `up_d_param` / `down_d_param` are the forward and backward diagonal angles as a
+    /// fraction of 90° (0.5 = 45°).
     pub fn process_circular_direction(
         x: f32,
         y: f32,
-        d_param: f32,
+        up_d_param: f32,
+        down_d_param: f32,
         horizontal_angle: Option<f32>,
     ) -> (f32, f32) {
         if x == 0.0 && y == 0.0 {
@@ -90,8 +150,13 @@ mod utils {
 
         // The factors that adjust the angles of the joystick output
         // Convert the d_param from 0->1 to -1 -> 1
-        // We do the check with y to make sure we're not applying this when we're moving backwards
-        let s_d = if y > 0.0 { (d_param * 2.0) - 1.0 } else { 0.0 };
+        let s_d = if y > 0.0 {
+            (up_d_param * 2.0) - 1.0
+        } else if y < 0.0 {
+            (down_d_param * 2.0) - 1.0
+        } else {
+            0.0
+        };
 
         // The input number for this is 0->1 which corresponds to the 2 -> 0 range of this parameter, so we need to convert
         let s_y = horizontal_angle.map(|v| (1.0 - v) * 2.0).unwrap_or(0.0);
@@ -167,7 +232,14 @@ impl JoystickState {
             down: JoystickDirectionState::new(),
             left: JoystickDirectionState::new(),
             right: JoystickDirectionState::new(),
+            seq_counter: 0,
+            activation: 0.0,
         }
+    }
+
+    /// Sets the raw value above which a key counts as pressed (use the analog range start).
+    pub fn set_activation(&mut self, activation: f32) {
+        self.activation = activation;
     }
 
     pub fn get_key_state(&mut self, bind: u8) -> bool {
@@ -185,19 +257,18 @@ impl JoystickState {
         direction: JoystickDirection,
         state: bool,
     ) -> bool {
-        match direction {
-            JoystickDirection::Up => self.up.update_digital(state),
-            JoystickDirection::Down => self.down.update_digital(state),
-            JoystickDirection::Left => self.left.update_digital(state),
-            JoystickDirection::Right => self.right.update_digital(state),
-        }
+        self.set_direction_state_analog(direction, if state { 1.0 } else { 0.0 })
     }
+
     pub fn set_direction_state_analog(&mut self, direction: JoystickDirection, state: f32) -> bool {
+        // Digital presses (1.0) must always count as active even if the range start is high.
+        let activation = self.activation.min(0.999);
+        let counter = &mut self.seq_counter;
         match direction {
-            JoystickDirection::Up => self.up.update_analog(state),
-            JoystickDirection::Down => self.down.update_analog(state),
-            JoystickDirection::Left => self.left.update_analog(state),
-            JoystickDirection::Right => self.right.update_analog(state),
+            JoystickDirection::Up => self.up.update_analog(state, activation, counter),
+            JoystickDirection::Down => self.down.update_analog(state, activation, counter),
+            JoystickDirection::Left => self.left.update_analog(state, activation, counter),
+            JoystickDirection::Right => self.right.update_analog(state, activation, counter),
         }
     }
 
@@ -240,44 +311,68 @@ impl JoystickState {
     }
 
     pub fn get_basic_direction(&self, config: Option<&JoystickAngleConfiguration>) -> (f32, f32) {
-        if config.is_none() {
-            return (0.0, 0.0);
-        }
-
-        let config = config.unwrap();
-
-        let x: f32;
-        let y: f32;
-
-        let angle: f32 = config.up_diagonal_angle;
-
-        let is_advanced_strafe_on: bool = config.use_left_right_angle;
-        let left_right_angle = if is_advanced_strafe_on {
-            config.left_right_angle
-        } else {
-            1.0
+        let config = match config {
+            Some(c) => c,
+            None => return (0.0, 0.0),
         };
 
         let analog_range = config.analog_range;
-
-        let up = self.up.get_with_range(&analog_range);
-        let down = self.down.get_with_range(&analog_range);
-        let left = self.left.get_with_range(&analog_range);
-        let right = self.right.get_with_range(&analog_range);
-
-        if down > up {
-            y = -down;
+        let curve = if config.analog_curve.is_finite() && config.analog_curve > 0.0 {
+            config.analog_curve
         } else {
-            y = up;
-        }
+            1.0
+        };
+        let shape = |v: f32| if curve == 1.0 { v } else { v.powf(curve) };
 
-        if left > right {
-            x = -left;
+        let up = shape(self.up.get_with_range(&analog_range));
+        let down = shape(self.down.get_with_range(&analog_range));
+        let left = shape(self.left.get_with_range(&analog_range));
+        let right = shape(self.right.get_with_range(&analog_range));
+
+        let y = resolve_axis(
+            up,
+            down,
+            self.up.pressed_seq,
+            self.down.pressed_seq,
+            config.socd_mode,
+        );
+        let x = resolve_axis(
+            right,
+            left,
+            self.right.pressed_seq,
+            self.left.pressed_seq,
+            config.socd_mode,
+        );
+
+        // Pick the angles for the side we're moving towards.
+        let use_left_side = config.split_sides && x < 0.0;
+        let up_angle = if use_left_side {
+            config.up_left_diagonal_angle
         } else {
-            x = right;
-        }
+            config.up_diagonal_angle
+        };
+        let strafe_angle = if !config.use_left_right_angle {
+            1.0
+        } else if use_left_side {
+            config.left_angle
+        } else {
+            config.left_right_angle
+        };
 
-        utils::process_circular_direction(x, y, angle, Some(left_right_angle))
+        let (out_x, out_y) = utils::process_circular_direction(
+            x,
+            y,
+            up_angle,
+            config.down_diagonal_angle,
+            Some(strafe_angle),
+        );
+
+        if config.analog_magnitude {
+            let magnitude = f32::max(x.abs(), y.abs()).min(1.0);
+            (out_x * magnitude, out_y * magnitude)
+        } else {
+            (out_x, out_y)
+        }
     }
 
     #[allow(dead_code)]
@@ -297,6 +392,74 @@ impl JoystickState {
             utils::float_to_ds4_js_axis(x),
             utils::float_to_ds4_js_axis(-y),
         )
+    }
+}
+
+/// Rotates the stick towards its target direction at a limited speed instead of snapping,
+/// keeping it at the target's distance from centre throughout.
+#[derive(Debug, Default)]
+pub struct TurnSmoother {
+    angle: Option<f32>,
+    last: Option<std::time::Instant>,
+}
+
+impl TurnSmoother {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// `ms_per_90` = milliseconds to rotate 90°. 0 or less disables smoothing.
+    pub fn step(
+        &mut self,
+        target: (f32, f32),
+        ms_per_90: f32,
+        now: std::time::Instant,
+    ) -> (f32, f32) {
+        let dt_ms = self
+            .last
+            .map(|t| now.saturating_duration_since(t).as_secs_f32() * 1000.0)
+            .unwrap_or(0.0)
+            .min(50.0);
+        self.last = Some(now);
+
+        let (tx, ty) = target;
+        let magnitude = (tx * tx + ty * ty).sqrt();
+        if magnitude < 1e-6 {
+            self.angle = None;
+            return (0.0, 0.0);
+        }
+        let target_angle = ty.atan2(tx);
+
+        let current = match self.angle {
+            Some(a) if ms_per_90.is_finite() && ms_per_90 > 0.0 => a,
+            _ => {
+                self.angle = Some(target_angle);
+                return target;
+            }
+        };
+
+        let pi = std::f32::consts::PI;
+        let mut diff = target_angle - current;
+        while diff > pi {
+            diff -= 2.0 * pi;
+        }
+        while diff < -pi {
+            diff += 2.0 * pi;
+        }
+
+        let max_step = std::f32::consts::FRAC_PI_2 * dt_ms / ms_per_90;
+        let new_angle = if diff.abs() <= max_step {
+            target_angle
+        } else {
+            current + diff.signum() * max_step
+        };
+        self.angle = Some(new_angle);
+
+        if new_angle == target_angle {
+            target
+        } else {
+            (new_angle.cos() * magnitude, new_angle.sin() * magnitude)
+        }
     }
 }
 
@@ -379,5 +542,159 @@ impl ControllerState {
             b_thumb_ry: ry,
             ..DSReport::default()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::ServiceConfiguration;
+    use std::time::{Duration, Instant};
+
+    fn cfg() -> JoystickAngleConfiguration {
+        ServiceConfiguration::default().left_joystick_strafing_angles
+    }
+
+    fn deg_from_forward((x, y): (f32, f32)) -> f32 {
+        x.atan2(y).to_degrees()
+    }
+
+    fn press(js: &mut JoystickState, d: JoystickDirection) {
+        js.set_direction_state_digital(d, true);
+    }
+    fn release(js: &mut JoystickState, d: JoystickDirection) {
+        js.set_direction_state_digital(d, false);
+    }
+
+    #[test]
+    fn last_input_wins_lets_s_override_held_w() {
+        let mut js = JoystickState::new();
+        let c = cfg(); // default mode is LastInputWins
+        press(&mut js, JoystickDirection::Up);
+        press(&mut js, JoystickDirection::Down);
+        let (_, y) = js.get_basic_direction(Some(&c));
+        assert!(y < -0.99, "S should win while W is held, got y={}", y);
+        release(&mut js, JoystickDirection::Down);
+        let (_, y) = js.get_basic_direction(Some(&c));
+        assert!(y > 0.99, "releasing S hands control back to W, got y={}", y);
+    }
+
+    #[test]
+    fn legacy_mode_keeps_original_w_priority() {
+        let mut js = JoystickState::new();
+        let mut c = cfg();
+        c.socd_mode = SocdMode::Legacy;
+        press(&mut js, JoystickDirection::Up);
+        press(&mut js, JoystickDirection::Down);
+        assert!(js.get_basic_direction(Some(&c)).1 > 0.99);
+    }
+
+    #[test]
+    fn a_then_d_snap_tap_and_neutral() {
+        let mut js = JoystickState::new();
+        let mut c = cfg();
+        press(&mut js, JoystickDirection::Left);
+        press(&mut js, JoystickDirection::Right);
+        assert!(js.get_basic_direction(Some(&c)).0 > 0.99, "D pressed last wins");
+        c.socd_mode = SocdMode::FirstInputWins;
+        assert!(js.get_basic_direction(Some(&c)).0 < -0.99, "A pressed first wins");
+        c.socd_mode = SocdMode::Neutral;
+        assert_eq!(js.get_basic_direction(Some(&c)), (0.0, 0.0));
+    }
+
+    #[test]
+    fn split_sides_give_different_w_a_and_w_d_angles() {
+        let mut c = cfg();
+        c.split_sides = true;
+        c.up_diagonal_angle = 60.0 / 90.0; // W+D
+        c.up_left_diagonal_angle = 50.0 / 90.0; // W+A
+
+        let mut js = JoystickState::new();
+        press(&mut js, JoystickDirection::Up);
+        press(&mut js, JoystickDirection::Right);
+        let wd = deg_from_forward(js.get_basic_direction(Some(&c)));
+        release(&mut js, JoystickDirection::Right);
+        press(&mut js, JoystickDirection::Left);
+        let wa = deg_from_forward(js.get_basic_direction(Some(&c)));
+
+        assert!((wd - 60.0).abs() < 0.5, "W+D {}", wd);
+        assert!((wa + 50.0).abs() < 0.5, "W+A {}", wa);
+    }
+
+    #[test]
+    fn unsplit_sides_stay_mirrored() {
+        let c = cfg();
+        let mut js = JoystickState::new();
+        press(&mut js, JoystickDirection::Up);
+        press(&mut js, JoystickDirection::Right);
+        let wd = deg_from_forward(js.get_basic_direction(Some(&c)));
+        release(&mut js, JoystickDirection::Right);
+        press(&mut js, JoystickDirection::Left);
+        let wa = deg_from_forward(js.get_basic_direction(Some(&c)));
+        assert!((wd + wa).abs() < 0.01);
+    }
+
+    #[test]
+    fn backward_diagonal_default_is_45_and_configurable() {
+        let mut c = cfg();
+        let mut js = JoystickState::new();
+        press(&mut js, JoystickDirection::Down);
+        press(&mut js, JoystickDirection::Right);
+        let a = deg_from_forward(js.get_basic_direction(Some(&c)));
+        assert!((a - 135.0).abs() < 0.5, "default back diagonal {}", a);
+        c.down_diagonal_angle = 30.0 / 90.0;
+        let a = deg_from_forward(js.get_basic_direction(Some(&c)));
+        assert!((a - 150.0).abs() < 0.5, "30° from straight back {}", a);
+    }
+
+    #[test]
+    fn output_stays_at_full_distance() {
+        let c = cfg();
+        let mut js = JoystickState::new();
+        press(&mut js, JoystickDirection::Up);
+        press(&mut js, JoystickDirection::Right);
+        let (x, y) = js.get_basic_direction(Some(&c));
+        assert!(((x * x + y * y).sqrt() - 1.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn analog_magnitude_and_curve() {
+        let mut c = cfg();
+        c.analog_range = (0.0, 1.0);
+        let mut js = JoystickState::new();
+        js.set_direction_state_analog(JoystickDirection::Up, 0.5);
+        assert!((js.get_basic_direction(Some(&c)).1 - 1.0).abs() < 1e-4, "off: full speed");
+        c.analog_magnitude = true;
+        assert!((js.get_basic_direction(Some(&c)).1 - 0.5).abs() < 1e-4, "on: half speed");
+
+        // Curve: W full, A half-pressed steers less with curve 2.0 than linear
+        c.analog_magnitude = false;
+        js.set_direction_state_analog(JoystickDirection::Up, 1.0);
+        js.set_direction_state_analog(JoystickDirection::Left, 0.5);
+        let linear = deg_from_forward(js.get_basic_direction(Some(&c))).abs();
+        c.analog_curve = 2.0;
+        let curved = deg_from_forward(js.get_basic_direction(Some(&c))).abs();
+        assert!(curved < linear, "curved {} vs linear {}", curved, linear);
+    }
+
+    #[test]
+    fn turn_smoother_rotates_at_full_distance() {
+        let mut s = TurnSmoother::new();
+        let t0 = Instant::now();
+        assert_eq!(s.step((0.0, 1.0), 40.0, t0), (0.0, 1.0)); // forward
+        // Snap target to the right (90°). After 20ms of a 40ms-per-90° setting: ~45°.
+        let (x, y) = s.step((1.0, 0.0), 40.0, t0 + Duration::from_millis(20));
+        assert!((deg_from_forward((x, y)) - 45.0).abs() < 1.0);
+        assert!(((x * x + y * y).sqrt() - 1.0).abs() < 1e-4, "stays at full distance");
+        let out = s.step((1.0, 0.0), 40.0, t0 + Duration::from_millis(45));
+        assert_eq!(out, (1.0, 0.0), "arrives at target");
+    }
+
+    #[test]
+    fn turn_smoother_off_is_instant() {
+        let mut s = TurnSmoother::new();
+        let t0 = Instant::now();
+        s.step((0.0, 1.0), 0.0, t0);
+        assert_eq!(s.step((1.0, 0.0), 0.0, t0 + Duration::from_millis(1)), (1.0, 0.0));
     }
 }

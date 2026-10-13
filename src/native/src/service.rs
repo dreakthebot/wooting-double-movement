@@ -8,11 +8,7 @@ use multiinput::*;
 use sdk::{DeviceInfo, WootingAnalogResult};
 use serde::{Deserialize, Serialize};
 #[cfg(windows)]
-use vigem::{
-    notification::*,
-    raw::{LPVOID, PVIGEM_CLIENT, PVIGEM_TARGET, UCHAR},
-    *,
-};
+use vigem::*;
 use wooting_analog_wrapper as sdk;
 
 use crate::config::ServiceConfiguration;
@@ -25,39 +21,6 @@ pub enum AnalogSDKState {
     Error(sdk::WootingAnalogResult),
     DevicesConnected(Vec<String>),
     NoDevices,
-}
-
-#[cfg(windows)]
-unsafe extern "C" fn _handle(
-    client: PVIGEM_CLIENT,
-    target: PVIGEM_TARGET,
-    large_motor: UCHAR,
-    small_motor: UCHAR,
-    led_number: UCHAR,
-    user_data: LPVOID,
-) {
-    // make a safe absraction over all arguments
-    let notification: X360Notification<i32> = X360Notification::new(
-        client,
-        target,
-        large_motor,
-        small_motor,
-        led_number,
-        user_data,
-    );
-
-    // get target and client which we got in our callback
-    let target = notification.get_target();
-
-    println!(
-        "Large motor is: {}, small is : {}",
-        notification.large_motor, notification.small_motor
-    );
-    println!("Led number: {}", notification.led_number);
-    dbg!(target.state());
-
-    // Get userdata(I dont know what it is)
-    dbg!(notification.userdata());
 }
 
 #[cfg(feature = "rawinput")]
@@ -96,6 +59,8 @@ pub struct Service {
     #[cfg(feature = "rawinput")]
     input_manager: RawInputManager,
     controller_state: ControllerState,
+    smoother: TurnSmoother,
+    last_sent: Option<(f32, f32)>,
     initd: bool,
     config: ServiceConfiguration,
     analog_initialised: bool,
@@ -116,6 +81,8 @@ impl Service {
             vigem: Vigem::new(),
             controller: None,
             controller_state: ControllerState::new(),
+            smoother: TurnSmoother::new(),
+            last_sent: None,
             #[cfg(feature = "rawinput")]
             input_manager: RawInputManager::new().unwrap(),
             initd: false,
@@ -131,6 +98,7 @@ impl Service {
             return Ok(());
         }
         self.config = config;
+        self.sync_activation();
 
         info!("Service init");
 
@@ -209,12 +177,14 @@ impl Service {
                     device_num
                 );
 
-                let devices: Vec<DeviceInfo> = sdk::get_connected_devices_info(10).0.unwrap();
-                assert_eq!(device_num, devices.len() as u32);
+                // Devices can be plugged/unplugged between calls, so don't trust device_num
+                // to match and don't panic if the list can't be read.
+                let devices: Vec<DeviceInfo> =
+                    sdk::get_connected_devices_info(10).0.unwrap_or_default();
                 for (i, device) in devices.iter().enumerate() {
-                    println!("Device {} is {:?}", i, device);
+                    debug!("Device {} is {:?}", i, device);
                 }
-                if device_num > 0 {
+                if !devices.is_empty() {
                     self.sdk_state = AnalogSDKState::DevicesConnected(
                         devices
                             .iter()
@@ -286,23 +256,34 @@ impl Service {
                 .get_xusb_report_from_axis(0.0, tiny_axis_y);
 
             controller.update(&report)?;
+            self.last_sent = None;
         }
         Ok(())
     }
 
     fn update_controller(&mut self) -> Result<()> {
+        let config = &self.config.left_joystick_strafing_angles;
+        let target = self
+            .controller_state
+            .left_joystick
+            .get_basic_direction(Some(config));
+        let (x, y) = self
+            .smoother
+            .step(target, config.turn_smoothing_ms, std::time::Instant::now());
+
+        if self.last_sent == Some((x, y)) {
+            return Ok(());
+        }
+
         if let Some(controller) = self.controller.as_mut() {
             #[cfg(feature = "ds4")]
-            let report = self
-                .controller_state
-                .get_ds4_report(Some(&self.config.left_joystick_strafing_angles));
+            let report = self.controller_state.get_ds4_report_from_axis(x, y);
 
             #[cfg(not(feature = "ds4"))]
-            let report = self
-                .controller_state
-                .get_xusb_report(Some(&self.config.left_joystick_strafing_angles));
+            let report = self.controller_state.get_xusb_report_from_axis(x, y);
 
             controller.update(&report)?;
+            self.last_sent = Some((x, y));
         }
         Ok(())
     }
@@ -456,7 +437,8 @@ impl Service {
         match sdk::read_full_buffer(20).0 {
             Ok(analog) => {
                 if self.sdk_state == AnalogSDKState::NoDevices {
-                    let devices: Vec<DeviceInfo> = sdk::get_connected_devices_info(10).0.unwrap();
+                    let devices: Vec<DeviceInfo> =
+                        sdk::get_connected_devices_info(10).0.unwrap_or_default();
 
                     if devices.len() > 0 {
                         self.sdk_state = AnalogSDKState::DevicesConnected(
@@ -524,7 +506,11 @@ impl Service {
                     }
                 };
 
-                if should_update {
+                // With turn smoothing on, the stick keeps rotating between key changes,
+                // so it has to be advanced every tick.
+                let smoothing =
+                    self.config.left_joystick_strafing_angles.turn_smoothing_ms > 0.0;
+                if should_update || smoothing {
                     self.update_controller()?;
                 }
             }
@@ -562,8 +548,15 @@ impl Service {
         self.initd = false;
     }
 
+    /// Keys count as "pressed" (for opposite-key handling) once they pass the analog range start.
+    fn sync_activation(&mut self) {
+        let start = self.config.left_joystick_strafing_angles.analog_range.0;
+        self.controller_state.left_joystick.set_activation(start);
+    }
+
     pub fn set_config(&mut self, config: ServiceConfiguration) -> Result<()> {
         self.config = config;
+        self.sync_activation();
         if self.config.use_analog_input {
             self.init_analog()?;
         } else {

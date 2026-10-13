@@ -21,6 +21,29 @@ use config::ServiceConfiguration;
 #[cfg(windows)]
 use service::Service;
 
+/// Raises the Windows timer resolution to 1ms for as long as it's alive.
+struct HighResTimer;
+
+impl HighResTimer {
+    #[allow(dead_code)]
+    fn new() -> Self {
+        #[cfg(windows)]
+        unsafe {
+            winapi::um::timeapi::timeBeginPeriod(1);
+        }
+        HighResTimer
+    }
+}
+
+impl Drop for HighResTimer {
+    fn drop(&mut self) {
+        #[cfg(windows)]
+        unsafe {
+            winapi::um::timeapi::timeEndPeriod(1);
+        }
+    }
+}
+
 lazy_static! {
     static ref MSG_THREAD_RUNNING: AtomicBool = AtomicBool::new(false);
     static ref MESSAGE_LOOP: Mutex<Option<thread::JoinHandle<()>>> = Mutex::new(None);
@@ -94,7 +117,14 @@ fn start_service(mut cx: FunctionContext) -> JsResult<JsBoolean> {
     MSG_THREAD_RUNNING.store(true, Ordering::SeqCst);
     let config_arg = cx.argument::<JsString>(0)?.value(&mut cx);
     info!("Received config {}", config_arg);
-    let config: ServiceConfiguration = serde_json::from_str(&config_arg[..]).unwrap();
+    let config: ServiceConfiguration = match serde_json::from_str(&config_arg[..]) {
+        Ok(c) => c,
+        Err(e) => {
+            error!("Invalid config passed to start_service: {}", e);
+            MSG_THREAD_RUNNING.store(false, Ordering::SeqCst);
+            return Ok(cx.boolean(false));
+        }
+    };
 
     // We can unwrap this because panics get given up to javascript as regular errors
     #[cfg(windows)]
@@ -111,6 +141,9 @@ fn start_service(mut cx: FunctionContext) -> JsResult<JsBoolean> {
     info!("Starting service");
     #[cfg(windows)]
     MESSAGE_LOOP.lock().unwrap().replace(thread::spawn(move || {
+        // Windows' default timer resolution is ~15.6ms, which would turn the 1ms sleep
+        // below into ~64 updates/sec. Request 1ms resolution while the loop runs.
+        let _timer = HighResTimer::new();
         while MSG_THREAD_RUNNING.load(Ordering::SeqCst) {
             if let Err(e) = SERVICE.lock().unwrap().poll() {
                 error!("Error occurred during polling {:#?}", e);
@@ -172,10 +205,18 @@ fn get_sdk_state(mut cx: FunctionContext) -> JsResult<JsValue> {
 
 fn set_config(mut cx: FunctionContext) -> JsResult<JsNull> {
     let config_arg = cx.argument::<JsString>(0)?.value(&mut cx);
-    let config: ServiceConfiguration = serde_json::from_str(&config_arg[..]).unwrap();
+    let config: ServiceConfiguration = match serde_json::from_str(&config_arg[..]) {
+        Ok(c) => c,
+        Err(e) => {
+            error!("Invalid config passed to set_config: {}", e);
+            return Ok(cx.null());
+        }
+    };
     info!("Received config {:?}", config);
     #[cfg(windows)]
-    SERVICE.lock().unwrap().set_config(config).unwrap();
+    if let Err(e) = SERVICE.lock().unwrap().set_config(config) {
+        error!("Failed to apply config: {:#}", e);
+    }
     return Ok(cx.null());
 }
 
