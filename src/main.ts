@@ -16,7 +16,9 @@ import {
   start_gamepad_detection,
 } from "./native/native";
 import ElectronStore from "electron-store";
-import { AppSettings, smallWindowSize } from "./common";
+import { APP_NAME, AppSettings, smallWindowSize } from "./common";
+import fs from "fs";
+import path from "path";
 import install, { REACT_DEVELOPER_TOOLS } from "electron-devtools-installer";
 import {
   getSDKState,
@@ -34,7 +36,6 @@ import {
   ServiceConfiguration,
 } from "./native/types";
 import { functions } from "electron-log";
-import { autoUpdater } from "electron-updater";
 import { PrettyAcceleratorName } from "./accelerator";
 import _ from "lodash";
 
@@ -146,8 +147,21 @@ declare var __dirname: any, process: any;
 
 let mainWindow: Electron.BrowserWindow | null;
 
+/** Opens a link in the browser, but only plain https URLs (no file:, ms-settings:, etc). */
+function openExternalSafely(url: string) {
+  try {
+    if (new URL(url).protocol === "https:") {
+      shell.openExternal(url);
+      return;
+    }
+  } catch (_) {
+    // invalid URL, fall through
+  }
+  console.warn(`Blocked opening non-https link: ${url}`);
+}
+
 function isDev() {
-  return process.mainModule.filename.indexOf("app.asar") === -1;
+  return !app.isPackaged;
 }
 
 function registerHandlers() {
@@ -168,9 +182,6 @@ function registerHandlers() {
     }
   });
 
-  ipcMain.handle("update_restart_and_install", () =>
-    autoUpdater.quitAndInstall()
-  );
 }
 
 function createMainWindow() {
@@ -194,16 +205,16 @@ function createMainWindow() {
 
   mainWindow.loadURL(`file://${__dirname}/../public/index.html`);
 
-  // All new windows opened from the app are links, so open them
-  // externally
-  mainWindow.webContents.on("new-window", function (event, url) {
-    event.preventDefault();
-    shell.openExternal(url);
+  // All new windows opened from the app are links: never open them inside the app,
+  // and only hand https links to the browser.
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    openExternalSafely(url);
+    return { action: "deny" };
   });
 
   mainWindow.webContents.on("will-navigate", function (event, url) {
     event.preventDefault();
-    shell.openExternal(url);
+    openExternalSafely(url);
   });
 
   if (isDev()) {
@@ -214,23 +225,8 @@ function createMainWindow() {
     if (!mainWindow) return;
 
     mainWindow.show();
-
-    if (!isDev()) {
-      autoUpdater.on("error", (e) =>
-        mainWindow?.webContents.send("update_error", e)
-      );
-      autoUpdater.on("update-available", () =>
-        mainWindow?.webContents.send("update_available")
-      );
-      autoUpdater.on("download-progress", ({ percent }) =>
-        mainWindow?.webContents.send("update_progress", percent)
-      );
-      autoUpdater.on("update-downloaded", () =>
-        mainWindow?.webContents.send("update_complete")
-      );
-
-      autoUpdater.checkForUpdates();
-    }
+    // Auto-updates are intentionally disabled: the official updater would replace this
+    // fork with Wooting's build.
   });
 
   mainWindow.on("closed", () => {
@@ -251,7 +247,7 @@ if (isSingleInstance) {
 if (isDev()) {
   app.setAppUserModelId(process.execPath);
 } else {
-  app.setAppUserModelId("Wooting.DoubleMovement");
+  app.setAppUserModelId("DoubleMovementPlus.App");
 }
 
 app.on("ready", () => {
@@ -318,7 +314,7 @@ const contextMenu = Menu.buildFromTemplate([
 function create_tray() {
   if (!tray) {
     tray = new Tray(`${__dirname}/../build/icon.ico`);
-    tray.setToolTip("Wooting Double Movement");
+    tray.setToolTip(APP_NAME);
     tray.on("double-click", () => {
       showOrCreateMainWindow();
     });
@@ -341,7 +337,7 @@ function showNotification(state: boolean) {
   }
 
   const config = {
-    title: "Wooting Double Movement " + (state ? "Enabled" : "Disabled"),
+    title: APP_NAME + " " + (state ? "Enabled" : "Disabled"),
     icon: `${__dirname}/../build/icon.ico`,
   };
   notification = new Notification(config);
@@ -389,7 +385,44 @@ class ServiceManager {
 
   sdk_state: SDKState = { type: "Uninitialized" };
 
+  /**
+   * This fork stores its settings separately from the original Wooting app. On first run,
+   * copy the original app's angles, keybinds and hotkey across (not the on/off state).
+   */
+  importLegacySettings() {
+    if (this.store.get("legacySettingsImported")) return;
+    this.store.set("legacySettingsImported", true);
+
+    const legacyPath = path.join(
+      app.getPath("appData"),
+      "wooting-double-movement",
+      "config.json"
+    );
+    try {
+      if (!fs.existsSync(legacyPath)) return;
+      const legacy = JSON.parse(fs.readFileSync(legacyPath, "utf8"));
+      if (legacy.leftJoystickStrafingAngles) {
+        this.store.set("leftJoystickStrafingAngles", {
+          ...defaultLeftJoystickStrafingAngles,
+          ...legacy.leftJoystickStrafingAngles,
+        });
+      }
+      if (legacy.keyMapping) this.store.set("keyMapping", legacy.keyMapping);
+      if (Array.isArray(legacy.enabledToggleAccelerator))
+        this.store.set(
+          "enabledToggleAccelerator",
+          legacy.enabledToggleAccelerator
+        );
+      if (typeof legacy.useAnalogInput === "boolean")
+        this.store.set("useAnalogInput", legacy.useAnalogInput);
+      console.log("Imported settings from the original Wooting app");
+    } catch (e) {
+      console.warn("Couldn't import the original app's settings", e);
+    }
+  }
+
   init() {
+    this.importLegacySettings();
     if (this.store.get("doubleMovementEnabled")) {
       this.start();
     }
@@ -497,7 +530,7 @@ class ServiceManager {
     });
 
     ipcMain.on("open-url", function (event, url) {
-      shell.openExternal(url);
+      openExternalSafely(url);
     });
 
     setInterval(() => {
@@ -593,8 +626,8 @@ class ServiceManager {
   onError = (error: Error) => {
     console.error(error);
     dialog.showErrorBox(
-      "Wooting Double Movement errored",
-      `An unexpected error occurred in the service, it's going to be disabled, please try again.\n\nPlease ensure that "Nefarius Virtual Gamepad Emulation Bus" is correctly installed.\n\n${error}`
+      `${APP_NAME} stopped`,
+      `The virtual controller stopped because of an error, so double movement has been turned off. You can turn it back on to retry.\n\nIf this keeps happening, check that "Nefarius Virtual Gamepad Emulation Bus" (ViGEmBus) is installed.\n\n${error}`
     );
     this.set_double_movement_enabled(false);
   };
@@ -605,35 +638,42 @@ class ServiceManager {
   }
 
   start() {
-    if (!this.running) {
-      try {
-        if (!startService(this.serviceConfiguration(), this.onError)) {
-          dialog.showErrorBox(
-            "Wooting Double Movement Error",
-            `An error occurred while starting the service.\n\nThis is likely caused by "Nefarius Virtual Gamepad Emulation Bus" not being correctly installed.\n\nPlease double check your installation. Quiting...`
-          );
-          app.quit();
-        }
+    if (this.running) return;
 
-        setTimeout(() => {
-          const slot = get_xinput_slot();
-          if (slot != null && slot > 0) {
-            dialog.showMessageBox({
-              type: "error",
-              title: "Player slot warning",
-              message: `Wooting Double Movement's controller is not in player slot 1, rather slot ${
-                slot + 1
-              }. You might experience issues in game. \n\nRemove all connected controllers, remove any virtual controllers, and restart this app.`,
-            });
-          }
-        }, 1000);
-      } catch (e) {
-        this.onError(e);
-      }
-      this.running = true;
-
-      this.check_sdk_state();
+    let started = false;
+    try {
+      started = startService(this.serviceConfiguration(), this.onError);
+    } catch (e) {
+      console.error("startService threw", e);
     }
+
+    if (!started) {
+      dialog.showErrorBox(
+        `${APP_NAME} couldn't start`,
+        `The virtual controller couldn't be created, so double movement has been turned off.\n\nThis is usually because "Nefarius Virtual Gamepad Emulation Bus" (ViGEmBus) isn't installed correctly. Check the log file for details.`
+      );
+      // Only record that it's off; the service isn't running so there's nothing to stop.
+      this.store_set("doubleMovementEnabled", false);
+      create_tray();
+      return;
+    }
+
+    this.running = true;
+
+    setTimeout(() => {
+      const slot = get_xinput_slot();
+      if (slot != null && slot > 0) {
+        dialog.showMessageBox({
+          type: "error",
+          title: "Player slot warning",
+          message: `${APP_NAME}'s controller is not in player slot 1, rather slot ${
+            slot + 1
+          }. You might experience issues in game. \n\nRemove all connected controllers, remove any virtual controllers, and restart this app.`,
+        });
+      }
+    }, 1000);
+
+    this.check_sdk_state();
   }
 
   stop() {

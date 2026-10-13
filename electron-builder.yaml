@@ -5,5 +5,7 @@ files:
   - js/index.node
   - public/**/*
   - build/**/*
-detectUpdateChannel: true
-appId: "Wooting.DoubleMovement"
+appId: "DoubleMovementPlus.App"
+productName: "Double Movement Plus"
+# No auto-update feed, so builds never point at Wooting's releases
+publish: null

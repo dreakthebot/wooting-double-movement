@@ -1,7 +1,7 @@
 #[allow(unused_imports)]
 use log::*;
 #[cfg(windows)]
-use vigem::{DS4Button, DSReport, XUSBReport};
+use vigem::{DSReport, XUSBReport};
 #[cfg(windows)]
 use winapi::um::winuser::GetAsyncKeyState;
 
@@ -118,20 +118,6 @@ fn resolve_axis(pos: f32, neg: f32, pos_seq: u64, neg_seq: u64, mode: SocdMode) 
     }
 }
 
-trait UpdateValue {
-    fn update(&mut self, value: Self) -> bool;
-}
-
-impl UpdateValue for bool {
-    fn update(&mut self, value: bool) -> bool {
-        if *self != value {
-            *self = value;
-            true
-        } else {
-            false
-        }
-    }
-}
 
 mod utils {
     /// Accepts x,y as values between -1 -> 1
@@ -569,7 +555,8 @@ mod tests {
     #[test]
     fn last_input_wins_lets_s_override_held_w() {
         let mut js = JoystickState::new();
-        let c = cfg(); // default mode is LastInputWins
+        let mut c = cfg();
+        c.socd_mode = SocdMode::LastInputWins;
         press(&mut js, JoystickDirection::Up);
         press(&mut js, JoystickDirection::Down);
         let (_, y) = js.get_basic_direction(Some(&c));
@@ -582,8 +569,8 @@ mod tests {
     #[test]
     fn legacy_mode_keeps_original_w_priority() {
         let mut js = JoystickState::new();
-        let mut c = cfg();
-        c.socd_mode = SocdMode::Legacy;
+        let c = cfg();
+        assert_eq!(c.socd_mode, SocdMode::Legacy, "original behaviour is the default");
         press(&mut js, JoystickDirection::Up);
         press(&mut js, JoystickDirection::Down);
         assert!(js.get_basic_direction(Some(&c)).1 > 0.99);
@@ -593,6 +580,7 @@ mod tests {
     fn a_then_d_snap_tap_and_neutral() {
         let mut js = JoystickState::new();
         let mut c = cfg();
+        c.socd_mode = SocdMode::LastInputWins;
         press(&mut js, JoystickDirection::Left);
         press(&mut js, JoystickDirection::Right);
         assert!(js.get_basic_direction(Some(&c)).0 > 0.99, "D pressed last wins");

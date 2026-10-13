@@ -561,6 +561,12 @@ impl Service {
         Ok(())
     }
 
+    /// Centres the stick immediately (used when the service stops after an error).
+    pub fn neutral(&mut self) -> Result<()> {
+        self.smoother = TurnSmoother::new();
+        self.send_axis(0.0, 0.0)
+    }
+
     pub fn get_xinput_slot(&mut self) -> Option<u32> {
         if let Some(controller) = self.controller.as_ref() {
             if let TargetType::Xbox360 = controller.get_type() {

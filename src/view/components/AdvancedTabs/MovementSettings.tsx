@@ -41,6 +41,14 @@ function SectionTitle(props: { title: string; children: React.ReactNode }) {
   );
 }
 
+function RuleWarning(props: { children: React.ReactNode }) {
+  return (
+    <Text fontSize="xs" color="orange.400">
+      ⚠ {props.children}
+    </Text>
+  );
+}
+
 function ToggleRow(props: {
   title: string;
   tooltip: React.ReactNode;
@@ -185,17 +193,25 @@ export function MovementSettingsTab() {
           What happens when opposite keys are held together, e.g. holding {W}{" "}
           and tapping {S}, or rolling from {A} to {D}. "Last pressed wins" lets
           a tap override a held key and hands control back when you release it.
+          Similar "snap tap" features have been banned in some games; check the
+          game's rules before using anything other than Original.
         </SectionTitle>
         <Select
           size="sm"
           value={config.socdMode}
           onChange={(e) => update({ socdMode: e.target.value as SocdMode })}
         >
+          <option value="Legacy">Original (Forward / Right always win)</option>
           <option value="LastInputWins">Last pressed wins (snap-tap)</option>
           <option value="FirstInputWins">First pressed wins</option>
           <option value="Neutral">Cancel out (stop)</option>
-          <option value="Legacy">Original (Forward / Right always win)</option>
         </Select>
+        {config.socdMode !== "Legacy" && (
+          <RuleWarning>
+            Snap-tap style input has been banned in some games. Check the
+            game's rules before using it.
+          </RuleWarning>
+        )}
       </VStack>
 
       <VStack align="stretch" spacing="2">
@@ -214,6 +230,12 @@ export function MovementSettingsTab() {
           format={(v) => (v === 0 ? "Off" : `${v} ms`)}
           onChange={(v) => update({ turnSmoothingMs: v })}
         />
+        {config.turnSmoothingMs > 0 && (
+          <RuleWarning>
+            One key press produces a series of stick movements, which can
+            count as a macro. Fortnite treats macros as cheating.
+          </RuleWarning>
+        )}
       </VStack>
 
       <VStack align="stretch" spacing="2">

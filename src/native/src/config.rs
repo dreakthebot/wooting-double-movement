@@ -64,8 +64,10 @@ pub enum SocdMode {
 }
 
 impl Default for SocdMode {
+    /// Original behaviour by default; last-input-wins is opt-in because similar features
+    /// (e.g. "snap tap") have been banned in some games.
     fn default() -> Self {
-        SocdMode::LastInputWins
+        SocdMode::Legacy
     }
 }
 

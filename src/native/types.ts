@@ -39,7 +39,7 @@ export const defaultLeftJoystickStrafingAngles: JoystickAngleConfiguration = {
   upLeftDiagonalAngle: 0.6473,
   leftAngle: 0.7888,
   downDiagonalAngle: 0.5,
-  socdMode: "LastInputWins",
+  socdMode: "Legacy",
   analogMagnitude: false,
   analogCurve: 1.0,
   turnSmoothingMs: 0,
@@ -69,7 +69,8 @@ export const defaultKeyMapping: KeyMapping = {
   },
 };
 
-export const defaultToggleAccelerator = [Key.Ctrl, Key.P];
+// Ctrl+P would take over Print in every app while the hotkey is registered.
+export const defaultToggleAccelerator = [Key.Ctrl, Key.Alt, Key.D];
 
 export type ControllerType = "DualShock4" | "Xbox360";
 

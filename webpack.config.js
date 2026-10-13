@@ -22,7 +22,8 @@ module.exports = (env) => ({
   },
   plugins: [
     new webpack.DefinePlugin({
-      DISABLE_ANNOUNCEMENTS: env.da !== undefined,
+      // Announcements are fetched from Wooting's server; always off in this fork.
+      DISABLE_ANNOUNCEMENTS: true,
     }),
   ],
   node: {

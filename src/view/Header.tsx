@@ -1,3 +1,4 @@
+import { APP_NAME } from "common";
 import React, { useCallback, useMemo } from "react";
 import {
   Center,
@@ -72,7 +73,7 @@ export function CopySettingsButton() {
 
     const singleKeyPercentage =
       (angleConfig.leftRightAngle - singleMin) / (singleMax - singleMin);
-    return `My Wooting Double Movement settings:
+    return `My ${APP_NAME} settings:
 ${PercentageText(strafePercentage)} ${(strafePercentage * 100).toFixed(
       0
     )}% Angle

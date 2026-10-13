@@ -2085,9 +2085,10 @@ electron-builder@^22.11:
     update-notifier "^5.1.0"
     yargs "^17.0.1"
 
-"electron-devtools-installer@https://github.com/simon-wh/electron-devtools-installer.git":
-  version "0.0.0-development"
-  resolved "https://github.com/simon-wh/electron-devtools-installer.git#7a4cfaf225c864282e216f0fa2c8524802ac970d"
+electron-devtools-installer@^3.2.0:
+  version "3.2.1"
+  resolved "https://registry.yarnpkg.com/electron-devtools-installer/-/electron-devtools-installer-3.2.1.tgz#338a0ada7b4232ee42cd88fe5cf305c6be95cfe9"
+  integrity sha512-FaCi+oDCOBTw0gJUsuw5dXW32b2Ekh5jO8lI1NRCQigo3azh2VogsIi0eelMVrP1+LkN/bewyH3Xoo1USjO0eQ==
   dependencies:
     rimraf "^3.0.2"
     semver "^7.2.1"

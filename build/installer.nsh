@@ -1,23 +1,26 @@
 
 !include LogicLib.nsh
 
+; Driver installers are downloaded and checksum-verified by src/scripts/afterPack.js.
+; They're extracted to the temporary plugins folder (cleaned up automatically) rather
+; than left in the install folder.
 !macro customInstall
   ${ifNot} ${isUpdated}
+    InitPluginsDir
+    SetOutPath "$PLUGINSDIR"
 
-    File "${BUILD_RESOURCES_DIR}\installers\ViGEmBusSetup_x64.msi"
-    ExecWait 'msiexec /i ViGEmBusSetup_x64.msi /qb'
+    ; ViGEmBus (virtual controller driver): only install if it isn't already present.
+    ReadRegStr $0 HKLM "SYSTEM\CurrentControlSet\Services\ViGEmBus" "ImagePath"
+    ${If} $0 == ""
+      File "${BUILD_RESOURCES_DIR}\installers\ViGEmBusSetup.exe"
+      ; Run the vendor's own installer so you can see and approve what it installs.
+      ExecWait '"$PLUGINSDIR\ViGEmBusSetup.exe"'
+    ${EndIf}
 
-     File "${BUILD_RESOURCES_DIR}\installers\wooting_analog_sdk.msi"
-    ExecWait 'msiexec /i wooting_analog_sdk.msi /qb'
+    ; Wooting Analog SDK (only used for analog input).
+    File "${BUILD_RESOURCES_DIR}\installers\wooting_analog_sdk.msi"
+    ExecWait 'msiexec /i "$PLUGINSDIR\wooting_analog_sdk.msi" /qb'
+
+    SetOutPath "$INSTDIR"
   ${endIf}
 !macroend
-
-#!macro customUnInstall
-#  ${ifNot} ${isUpdated}
-#    MessageBox MB_YESNO "Would you like to remove the Nefarius Virtual Gamepad Emulaton Bus Driver?" IDYES true IDNO false
-#    true:
-#      File "${BUILD_RESOURCES_DIR}\installers\ViGEmBusSetup_x64.msi"
-#      ExecWait 'msiexec /x ViGEmBusSetup_x64.msi /qb'
-#    false:
-#  ${endIf}
-#!macroend
