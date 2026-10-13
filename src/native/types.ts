@@ -28,21 +28,27 @@ export interface JoystickAngleConfiguration {
   analogCurve: number;
   /** ms for the stick to rotate 90° when direction changes; 0 = instant */
   turnSmoothingMs: number;
+  /** Cap forward-moving directions (incl. A/D alone) at sprintMaxAngle so sprint is kept */
+  keepSprint: boolean;
+  /** Degrees from forward */
+  sprintMaxAngle: number;
 }
 
 export const defaultLeftJoystickStrafingAngles: JoystickAngleConfiguration = {
   upDiagonalAngle: 0.6473,
   useLeftRightAngle: true,
-  leftRightAngle: 0.7888,
+  leftRightAngle: 70 / 90,
   analogRange: [0.075, 0.9],
   splitSides: false,
   upLeftDiagonalAngle: 0.6473,
-  leftAngle: 0.7888,
+  leftAngle: 70 / 90,
   downDiagonalAngle: 0.5,
   socdMode: "Legacy",
   analogMagnitude: false,
   analogCurve: 1.0,
   turnSmoothingMs: 0,
+  keepSprint: true,
+  sprintMaxAngle: 70,
 };
 
 export interface JoystickKeyMapping {

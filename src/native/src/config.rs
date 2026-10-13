@@ -49,6 +49,22 @@ pub struct JoystickAngleConfiguration {
     /// direction changes. 0 = instant (off). Distance stays at full the whole time.
     #[serde(rename = "turnSmoothingMs", default)]
     pub turn_smoothing_ms: f32,
+
+    /// Keep every forward-moving direction (including A or D alone) within
+    /// `sprint_max_angle` of straight ahead. Fortnite drops you out of sprint past ~70°.
+    #[serde(rename = "keepSprint", default = "default_true")]
+    pub keep_sprint: bool,
+
+    /// Degrees from straight forward. Default 70.
+    #[serde(rename = "sprintMaxAngle", default = "default_sprint_max")]
+    pub sprint_max_angle: f32,
+}
+
+fn default_true() -> bool {
+    true
+}
+fn default_sprint_max() -> f32 {
+    70.0
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
@@ -75,7 +91,8 @@ fn default_up_diagonal() -> f32 {
     0.6473
 }
 fn default_left_right() -> f32 {
-    0.7888
+    // 70° from forward: the most sideways a lone A/D press can go while keeping sprint.
+    70.0 / 90.0
 }
 fn default_down_diagonal() -> f32 {
     0.5
@@ -171,7 +188,7 @@ impl Default for ServiceConfiguration {
             left_joystick_strafing_angles: JoystickAngleConfiguration {
                 up_diagonal_angle: 0.67,
                 use_left_right_angle: false,
-                left_right_angle: 0.78,
+                left_right_angle: 70.0 / 90.0,
                 analog_range: (0.0, 1.0),
                 split_sides: false,
                 up_left_diagonal_angle: default_up_diagonal(),
@@ -181,6 +198,8 @@ impl Default for ServiceConfiguration {
                 analog_magnitude: false,
                 analog_curve: default_analog_curve(),
                 turn_smoothing_ms: 0.0,
+                keep_sprint: true,
+                sprint_max_angle: default_sprint_max(),
             },
             key_mapping: KeyMapping::default(),
             use_analog_input: false,

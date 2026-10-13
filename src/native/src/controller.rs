@@ -345,6 +345,16 @@ impl JoystickState {
             config.left_right_angle
         };
 
+        // Keep sprint: cap forward diagonals and lone A/D presses at the sprint limit.
+        // A lone A/D press with single-key strafing off would point 90° sideways; the cap
+        // tilts it forward to the limit instead.
+        let (up_angle, strafe_angle) = if config.keep_sprint {
+            let limit = (config.sprint_max_angle.clamp(45.0, 90.0)) / 90.0;
+            (up_angle.min(limit), strafe_angle.min(limit))
+        } else {
+            (up_angle, strafe_angle)
+        };
+
         let (out_x, out_y) = utils::process_circular_direction(
             x,
             y,
@@ -583,9 +593,10 @@ mod tests {
         c.socd_mode = SocdMode::LastInputWins;
         press(&mut js, JoystickDirection::Left);
         press(&mut js, JoystickDirection::Right);
-        assert!(js.get_basic_direction(Some(&c)).0 > 0.99, "D pressed last wins");
+        // Keep sprint tilts lone A/D to 70°, so x is sin(70°) ≈ 0.94 rather than 1
+        assert!(js.get_basic_direction(Some(&c)).0 > 0.9, "D pressed last wins");
         c.socd_mode = SocdMode::FirstInputWins;
-        assert!(js.get_basic_direction(Some(&c)).0 < -0.99, "A pressed first wins");
+        assert!(js.get_basic_direction(Some(&c)).0 < -0.9, "A pressed first wins");
         c.socd_mode = SocdMode::Neutral;
         assert_eq!(js.get_basic_direction(Some(&c)), (0.0, 0.0));
     }
@@ -701,6 +712,36 @@ mod tests {
         }
         let per = start.elapsed().as_nanos() as f64 / n as f64;
         println!("stick math: {:.0} ns per update (checksum {})", per, acc);
+    }
+
+    #[test]
+    fn keep_sprint_caps_strafes_at_70() {
+        let mut c = cfg();
+        assert!(c.keep_sprint, "on by default");
+        // Even with single-key strafing off (pure sideways) and a wide diagonal set,
+        // nothing in the forward half goes past 70°.
+        c.use_left_right_angle = false;
+        c.up_diagonal_angle = 80.0 / 90.0;
+
+        let mut js = JoystickState::new();
+        press(&mut js, JoystickDirection::Right);
+        let d_alone = deg_from_forward(js.get_basic_direction(Some(&c)));
+        assert!((d_alone - 70.0).abs() < 0.5, "D alone {}", d_alone);
+
+        press(&mut js, JoystickDirection::Up);
+        let wd = deg_from_forward(js.get_basic_direction(Some(&c)));
+        assert!((wd - 70.0).abs() < 0.5, "W+D {}", wd);
+
+        // Smaller angles are left alone
+        c.up_diagonal_angle = 55.0 / 90.0;
+        let wd = deg_from_forward(js.get_basic_direction(Some(&c)));
+        assert!((wd - 55.0).abs() < 0.5, "W+D {}", wd);
+
+        // Off: A/D alone goes straight sideways again
+        c.keep_sprint = false;
+        release(&mut js, JoystickDirection::Up);
+        let d_alone = deg_from_forward(js.get_basic_direction(Some(&c)));
+        assert!((d_alone - 90.0).abs() < 0.5, "D alone without cap {}", d_alone);
     }
 
     #[test]

@@ -28,6 +28,9 @@ Fork of Wooting Double Movement 1.5.0.
 - Optional "only while game is focused" mode.
 - Riskier options (snap-tap modes, turn smoothing) are off by default and show a warning.
 
+**Keep sprint while strafing** (on by default)
+- Caps every forward direction, including A or D pressed alone, at 70° from forward. Fortnite stops your sprint past about 70°, so strafing no longer slows you down.
+
 **Responsiveness**
 - Keys are checked about 4,000 times a second (every 0.25 ms) using a high-resolution Windows timer, up from roughly every 1–2 ms.
 - The input loop gets game-priority scheduling, so it stays on time while a game is using your CPU.

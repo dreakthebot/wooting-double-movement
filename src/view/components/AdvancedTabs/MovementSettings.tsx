@@ -140,6 +140,26 @@ export function MovementSettingsTab() {
   return (
     <VStack align="stretch" spacing="5" pb="4">
       <VStack align="stretch" spacing="2">
+        <ToggleRow
+          title="Keep sprint while strafing"
+          checked={config.keepSprint ?? true}
+          onToggle={() => update({ keepSprint: !(config.keepSprint ?? true) })}
+          tooltip={
+            <>
+              Fortnite only lets you sprint while you move within about{" "}
+              {config.sprintMaxAngle ?? 70}° of straight forward. This keeps every
+              forward direction inside that limit, including {A} or {D} pressed on
+              their own, so strafing never drops you out of sprint. Wider angle
+              settings are capped at the limit while this is on.
+            </>
+          }
+        />
+        <Text fontSize="xs" color="gray.500">
+          Caps {W}+{A}, {W}+{D}, and {A}/{D} alone at {config.sprintMaxAngle ?? 70}° from forward.
+        </Text>
+      </VStack>
+
+      <VStack align="stretch" spacing="2">
         <SectionTitle title="Controller type">
           Which controller the app pretends to be. If the game ignores the
           stick, try the other one. Changing this briefly restarts the virtual
