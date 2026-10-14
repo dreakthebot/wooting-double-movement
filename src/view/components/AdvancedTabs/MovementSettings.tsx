@@ -26,6 +26,7 @@ import { AngleControl } from "../settings/angle/AngleControl";
 import { strafeAngleRange } from "./StrafeSettings";
 import { keybindDisplay } from "./Utils";
 import { ResponsivenessPanel } from "./Responsiveness";
+import { CurveEditor, CurvePoint } from "./CurveEditor";
 
 const backDiagonalRange: [number, number] = [30, 70];
 
@@ -325,18 +326,20 @@ export function MovementSettingsTab() {
       </VStack>
 
       <VStack align="stretch" spacing="2">
-        <SectionTitle title="Analog steering curve">
-          Analog input only. With {W} held, how far you press {A}/{D} sets how
-          sharp the diagonal is. Higher values make light presses steer more
-          gently for finer control; 1.0 is linear.
+        <SectionTitle title="Analog response curve">
+          Analog input only. Shapes how far you press a key (left to right)
+          into how much it counts (bottom to top). With {W} held, this decides
+          how much a partial {A}/{D} press turns you. Drag the points, or pick a
+          preset. Points below the dashed line make light presses gentler;
+          above it, sharper. A full press always counts 100%.
         </SectionTitle>
-        <ValueSlider
-          value={config.analogCurve}
-          min={0.5}
-          max={3}
-          step={0.1}
-          format={(v) => v.toFixed(1)}
-          onChange={(v) => update({ analogCurve: v })}
+        <CurveEditor
+          points={(config.analogCurvePoints ?? []) as CurvePoint[]}
+          onChange={(points) => update({ analogCurvePoints: points })}
+          fullAngle={Math.min(
+            config.upDiagonalAngle * 90,
+            config.keepSprint ?? true ? config.sprintMaxAngle ?? 70 : 90
+          )}
         />
       </VStack>
 

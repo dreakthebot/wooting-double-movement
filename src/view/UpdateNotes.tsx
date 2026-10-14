@@ -28,6 +28,9 @@ Fork of Wooting Double Movement 1.5.0.
 - Optional "only while game is focused" mode.
 - Riskier options (snap-tap modes, turn smoothing) are off by default and show a warning.
 
+**Analog response curve editor**
+- Drag points on a graph to shape how key depth turns into movement, with Linear, Gentle, Very gentle, Sharp and S-curve presets. Replaces the single steering-curve number.
+
 **Keep sprint while strafing** (on by default)
 - Caps every forward direction, including A or D pressed alone, at 70° from forward. Fortnite stops your sprint past about 70°, so strafing no longer slows you down.
 

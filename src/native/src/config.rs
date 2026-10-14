@@ -45,6 +45,11 @@ pub struct JoystickAngleConfiguration {
     #[serde(rename = "analogCurve", default = "default_analog_curve")]
     pub analog_curve: f32,
 
+    /// Custom analog response curve: (key depth, output) points, both 0..1, between the
+    /// fixed ends (0,0) and (1,1). Interpolated linearly. Empty = use `analog_curve`.
+    #[serde(rename = "analogCurvePoints", default)]
+    pub analog_curve_points: Vec<(f32, f32)>,
+
     /// Turn smoothing: milliseconds the stick takes to rotate 90° around its edge when the
     /// direction changes. 0 = instant (off). Distance stays at full the whole time.
     #[serde(rename = "turnSmoothingMs", default)]
@@ -197,6 +202,7 @@ impl Default for ServiceConfiguration {
                 socd_mode: SocdMode::default(),
                 analog_magnitude: false,
                 analog_curve: default_analog_curve(),
+                analog_curve_points: Vec::new(),
                 turn_smoothing_ms: 0.0,
                 keep_sprint: true,
                 sprint_max_angle: default_sprint_max(),

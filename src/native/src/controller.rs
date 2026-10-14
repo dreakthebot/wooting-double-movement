@@ -186,6 +186,40 @@ mod utils {
         (out_x, out_y)
     }
 
+    /// Maps key depth (0..1) through a curve given by user points, with fixed ends at
+    /// (0,0) and (1,1). Points are sorted, clamped to 0..1 and forced non-decreasing so a
+    /// deeper press never gives less output. Linear interpolation between points.
+    pub fn eval_curve(points: &[(f32, f32)], v: f32) -> f32 {
+        let v = if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 };
+        let mut pts: Vec<(f32, f32)> = points
+            .iter()
+            .filter(|(x, y)| x.is_finite() && y.is_finite())
+            .map(|&(x, y)| (x.clamp(0.0, 1.0), y.clamp(0.0, 1.0)))
+            .filter(|&(x, _)| x > 0.0 && x < 1.0)
+            .collect();
+        pts.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        let mut all = Vec::with_capacity(pts.len() + 2);
+        all.push((0.0f32, 0.0f32));
+        let mut max_y = 0.0f32;
+        for (x, y) in pts {
+            max_y = max_y.max(y);
+            all.push((x, max_y));
+        }
+        all.push((1.0, 1.0));
+
+        for w in all.windows(2) {
+            let (x0, y0) = w[0];
+            let (x1, y1) = w[1];
+            if v <= x1 {
+                if x1 - x0 <= f32::EPSILON {
+                    return y1;
+                }
+                return y0 + (y1 - y0) * (v - x0) / (x1 - x0);
+            }
+        }
+        1.0
+    }
+
     #[allow(dead_code)]
     pub fn float_to_xusb_js_axis(value: f32) -> i16 {
         let mut value = (value.max(-1.0).min(1.0) * 32767.0) as i16;
@@ -308,7 +342,16 @@ impl JoystickState {
         } else {
             1.0
         };
-        let shape = |v: f32| if curve == 1.0 { v } else { v.powf(curve) };
+        let points = &config.analog_curve_points;
+        let shape = |v: f32| {
+            if !points.is_empty() {
+                utils::eval_curve(points, v)
+            } else if curve == 1.0 {
+                v
+            } else {
+                v.powf(curve)
+            }
+        };
 
         let up = shape(self.up.get_with_range(&analog_range));
         let down = shape(self.down.get_with_range(&analog_range));
@@ -742,6 +785,41 @@ mod tests {
         release(&mut js, JoystickDirection::Up);
         let d_alone = deg_from_forward(js.get_basic_direction(Some(&c)));
         assert!((d_alone - 90.0).abs() < 0.5, "D alone without cap {}", d_alone);
+    }
+
+    #[test]
+    fn curve_points_shape_partial_presses() {
+        use utils::eval_curve;
+        // Linear when points sit on the diagonal
+        let linear = [(0.25, 0.25), (0.5, 0.5), (0.75, 0.75)];
+        assert!((eval_curve(&linear, 0.4) - 0.4).abs() < 1e-6);
+        // Gentle start: 50% depth -> 20% output, interpolated between points
+        let gentle = [(0.5, 0.2)];
+        assert!((eval_curve(&gentle, 0.5) - 0.2).abs() < 1e-6);
+        assert!((eval_curve(&gentle, 0.25) - 0.1).abs() < 1e-6);
+        assert!((eval_curve(&gentle, 0.75) - 0.6).abs() < 1e-6);
+        // Ends are fixed: full press is always full
+        assert_eq!(eval_curve(&gentle, 1.0), 1.0);
+        assert_eq!(eval_curve(&gentle, 0.0), 0.0);
+        // A dip is flattened so deeper never gives less
+        let dip = [(0.3, 0.6), (0.6, 0.2)];
+        assert!(eval_curve(&dip, 0.6) >= eval_curve(&dip, 0.3));
+        // Bad values don't crash
+        assert!(eval_curve(&[(f32::NAN, 0.5)], 0.5).is_finite());
+    }
+
+    #[test]
+    fn curve_points_override_exponent_in_output() {
+        let mut c = cfg();
+        c.analog_range = (0.0, 1.0);
+        c.keep_sprint = false;
+        let mut js = JoystickState::new();
+        js.set_direction_state_analog(JoystickDirection::Up, 1.0);
+        js.set_direction_state_analog(JoystickDirection::Right, 0.5);
+        let linear = deg_from_forward(js.get_basic_direction(Some(&c)));
+        c.analog_curve_points = vec![(0.5, 0.2)];
+        let gentle = deg_from_forward(js.get_basic_direction(Some(&c)));
+        assert!(gentle < linear * 0.6, "gentle {} vs linear {}", gentle, linear);
     }
 
     #[test]

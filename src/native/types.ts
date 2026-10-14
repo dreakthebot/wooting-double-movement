@@ -24,8 +24,10 @@ export interface JoystickAngleConfiguration {
   socdMode: SocdMode;
   /** Analog: partial presses move slower */
   analogMagnitude: boolean;
-  /** Analog: key-depth exponent, 1 = linear */
+  /** Analog: key-depth exponent, 1 = linear (used only when analogCurvePoints is empty) */
   analogCurve: number;
+  /** Analog: custom response curve as [depth, output] points between fixed (0,0) and (1,1) */
+  analogCurvePoints: [number, number][];
   /** ms for the stick to rotate 90° when direction changes; 0 = instant */
   turnSmoothingMs: number;
   /** Cap forward-moving directions (incl. A/D alone) at sprintMaxAngle so sprint is kept */
@@ -46,6 +48,11 @@ export const defaultLeftJoystickStrafingAngles: JoystickAngleConfiguration = {
   socdMode: "Legacy",
   analogMagnitude: false,
   analogCurve: 1.0,
+  analogCurvePoints: [
+    [0.25, 0.25],
+    [0.5, 0.5],
+    [0.75, 0.75],
+  ],
   turnSmoothingMs: 0,
   keepSprint: true,
   sprintMaxAngle: 70,
